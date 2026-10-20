@@ -32,8 +32,8 @@ export default function LoginPage() {
   return (
     <main className="login">
       <form onSubmit={handleSubmit} className="card login-card">
-        <h1>Epic version tracker</h1>
-        <p className="muted">Which Epic release each public FHIR server reports.</p>
+        <h1>EHR version tracker</h1>
+        <p className="muted">Which version every public EHR FHIR server reports.</p>
         <label>
           <span>Username</span>
           <input

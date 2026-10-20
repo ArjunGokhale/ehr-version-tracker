@@ -2,8 +2,8 @@ import "./globals.css";
 import type { ReactNode } from "react";
 
 export const metadata = {
-  title: "Epic Version Tracker",
-  description: "Epic release reported by every public FHIR server in Epic's Brands bundle.",
+  title: "EHR Version Tracker",
+  description: "Software version reported by every public certified-EHR FHIR server.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
