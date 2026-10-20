@@ -15,6 +15,10 @@ export type ScanRun = {
 
 export type ServerResult = {
   address: string;
+  vendor: string | null;
+  source: string | null;
+  endpoint_count: number;
+  probe_url: string | null;
   host: string | null;
   endpoint_names: string[];
   managing_orgs: string[];
@@ -30,7 +34,29 @@ export type ServerResult = {
   error: string | null;
 };
 
-export type PriorResult = Pick<ServerResult, "address" | "software_version" | "release_month">;
+export type PriorResult = Pick<
+  ServerResult,
+  "address" | "vendor" | "software_version" | "release_month"
+>;
+
+export const EPIC = "Epic Systems Corporation";
+
+const VENDOR_ALIASES: Record<string, string> = {
+  [EPIC]: "Epic",
+  "Medical Information Technology, Inc. (MEDITECH)": "MEDITECH",
+};
+
+/** Short display name for a CHPL developer: alias, else the name minus corporate suffixes. */
+export function vendorLabel(vendor: string | null): string {
+  if (!vendor) return "Unknown";
+  if (VENDOR_ALIASES[vendor]) return VENDOR_ALIASES[vendor];
+  let name = vendor;
+  for (;;) {
+    const next = name.replace(/,?\s+(Inc\.?|LLC|L\.L\.C\.|Corporation|Corp\.?|Co\.|Ltd\.?)$/i, "");
+    if (next === name) return name;
+    name = next;
+  }
+}
 
 export const STALE_MONTHS = 12;
 
@@ -54,8 +80,14 @@ export function ageLabel(releaseMonth: string | null, asOf: Date): string {
   return rest ? `${years} yr ${rest} mo` : `${years} yr`;
 }
 
-/** Display name for a server: the brand(s) Epic lists on its endpoint entry. */
-export function serverName(r: Pick<ServerResult, "endpoint_names" | "host">): string {
+/**
+ * Display name for a server: the organization(s) listed on it, or for a multi-tenant
+ * host (more names than we store) the host itself.
+ */
+export function serverName(
+  r: Pick<ServerResult, "endpoint_names" | "host" | "brand_count" | "source">
+): string {
+  if (r.source === "lantern" && r.brand_count > 3) return r.host ?? "Unknown";
   return r.endpoint_names.join(" · ") || r.host || "Unknown";
 }
 

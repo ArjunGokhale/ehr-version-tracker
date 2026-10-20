@@ -1,19 +1,31 @@
-"""Scan every FHIR server in Epic's public Brands bundle and record its Epic release.
+"""Scan public EHR FHIR servers and record the software version each one reports.
 
-Method (after Brendan Keeler, "Your Version Is Showing"): download the Brands bundle,
-request [address]/metadata for each unique server with Accept: application/fhir+json,
-retry failures once, and read CapabilityStatement.software.version.
+Sources
+  epic     Epic's public Brands bundle (https://open.epic.com/Endpoints/Brands). Every unique
+           server address is probed. This is Brendan Keeler's method from "Your Version Is
+           Showing" and is more complete for Epic than any aggregator.
+  lantern  ONC Lantern's daily CHPL endpoint export (every other certified EHR developer's
+           published endpoint list). Many vendors host thousands of tenants on one host, so
+           endpoints are grouped by (developer, host) and one tenant is probed per host; the
+           retry uses a different tenant on the same host when there is one.
+
+For each server: GET [base]/metadata with Accept: application/fhir+json, retry failures
+once, and read CapabilityStatement.software.{name,version,releaseDate}.
 
 Standard library only. Writes to Supabase through the ingest_* RPCs when SUPABASE_URL,
 SUPABASE_ANON_KEY and INGEST_TOKEN are set; always writes a local JSON copy.
 
-    python3 scanner/scan.py                  # scan + upload (if env is set)
-    python3 scanner/scan.py --no-upload      # scan, local JSON only
+    python3 scanner/scan.py                      # all sources, scan + upload
+    python3 scanner/scan.py --sources epic       # Epic only
+    python3 scanner/scan.py --no-upload          # scan, local JSON only
 """
 
 import argparse
 import collections
+import csv
 import datetime as dt
+import hashlib
+import io
 import json
 import os
 import re
@@ -26,12 +38,21 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 BRANDS_URL = "https://open.epic.com/Endpoints/Brands"
+LANTERN_URL = "https://lantern.healthit.gov/api/daily/download?source=CHPL"
+EPIC_VENDOR = "Epic Systems Corporation"
 USER_AGENT = "epic-version-tracker/1.0 (+https://github.com/ArjunGokhale/epic-version-tracker)"
+MAX_NAMES_PER_SERVER = 5  # org names stored on a server row; the full list goes to `brands`
 MONTHS = {m: i for i, m in enumerate(
     ["january", "february", "march", "april", "may", "june", "july", "august",
      "september", "october", "november", "december"], start=1)}
 
 SSL_CTX = ssl.create_default_context()
+
+
+def http_get(url, *, headers=None, timeout=30):
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, **(headers or {})})
+    with urllib.request.urlopen(req, timeout=timeout, context=SSL_CTX) as resp:
+        return resp.read()
 
 
 def http_json(url, *, method="GET", body=None, headers=None, timeout=30):
@@ -44,7 +65,7 @@ def http_json(url, *, method="GET", body=None, headers=None, timeout=30):
 
 
 def parse_release_month(version):
-    """'February 2026' -> date(2026, 2, 1); anything else -> None."""
+    """Epic-style 'February 2026' -> date(2026, 2, 1); anything else -> None."""
     m = re.fullmatch(r"\s*([A-Za-z]+)\s+(\d{4})\s*", version or "")
     if not m or m.group(1).lower() not in MONTHS:
         return None
@@ -62,15 +83,17 @@ def normalize(address):
     return address.strip().rstrip("/")
 
 
-def load_bundle(path=None):
-    if path:
-        with open(path) as f:
-            return json.load(f)
-    return http_json(BRANDS_URL, timeout=180)
+def new_server(address, vendor, source):
+    return {"address": address, "host": urllib.parse.urlparse(address).hostname,
+            "vendor": vendor, "source": source, "candidates": [address],
+            "endpoint_names": set(), "managing_orgs": set(), "brands": set(),
+            "locations": 0, "states": set(), "endpoint_count": 0}
 
 
-def index_bundle(bundle):
-    """Group the bundle into unique servers and a flat brand directory."""
+# --- Epic: Brands bundle -------------------------------------------------------------------
+
+def index_epic(bundle):
+    """Group Epic's bundle into unique servers and a flat brand directory."""
     resources = [e["resource"] for e in bundle["entry"]]
     endpoints = {"urn:uuid:" + r["id"]: r for r in resources if r["resourceType"] == "Endpoint"}
     orgs = [r for r in resources if r["resourceType"] == "Organization"]
@@ -83,10 +106,8 @@ def index_bundle(bundle):
     servers = {}
     for ep in endpoints.values():
         addr = normalize(ep["address"])
-        s = servers.setdefault(addr.lower(), {
-            "address": addr, "host": urllib.parse.urlparse(addr).hostname,
-            "endpoint_names": set(), "managing_orgs": set(), "brands": set(),
-            "locations": 0, "states": set()})
+        s = servers.setdefault(addr.lower(), new_server(addr, EPIC_VENDOR, "epic-brands"))
+        s["endpoint_count"] += 1
         if ep.get("name"):
             s["endpoint_names"].add(ep["name"])
         mo = (ep.get("managingOrganization") or {}).get("display")
@@ -105,7 +126,8 @@ def index_bundle(bundle):
             if state:
                 s["states"].add(state)
         brands.append({"org_id": org["id"], "name": org.get("name") or "", "kind": "primary",
-                       "parent_org_id": None, "addresses": addrs, "city": None, "state": state})
+                       "parent_org_id": None, "addresses": addrs, "city": None, "state": state,
+                       "vendor": EPIC_VENDOR})
 
     for org in orgs:
         if "endpoint" in org:
@@ -119,38 +141,96 @@ def index_bundle(bundle):
                 servers[addr.lower()]["states"].add(addr0["state"])
         brands.append({"org_id": org["id"], "name": org.get("name") or "", "kind": "location",
                        "parent_org_id": parent.removeprefix("urn:uuid:") if parent else None,
-                       "addresses": addrs, "city": addr0.get("city"), "state": addr0.get("state")})
+                       "addresses": addrs, "city": addr0.get("city"), "state": addr0.get("state"),
+                       "vendor": EPIC_VENDOR})
 
     return list(servers.values()), brands, len(endpoints)
 
 
-def fetch_metadata(address):
-    cs = http_json(address + "/metadata", headers={"Accept": "application/fhir+json"})
+# --- Everyone else: ONC Lantern's CHPL export ------------------------------------------------
+
+def index_lantern(raw_csv, skip_vendors):
+    """Group Lantern's endpoint rows by (developer, host); one server per group."""
+    reader = csv.DictReader(io.StringIO(raw_csv.decode("utf-8", errors="replace")))
+    groups = collections.defaultdict(lambda: {"urls": set(), "names": set()})
+    endpoint_count = 0
+    for row in reader:
+        vendor = (row.get("api_developer_name") or "").strip()
+        url = normalize(row.get("url") or "")
+        if not vendor or not url or vendor in skip_vendors:
+            continue
+        host = urllib.parse.urlparse(url).hostname
+        if not host:
+            continue
+        endpoint_count += 1
+        g = groups[(vendor, host.lower())]
+        g["urls"].add(url)
+        for name in (row.get("api_information_source_name") or "").split(";"):
+            if name.strip():
+                g["names"].add(name.strip())
+
+    servers, brands = [], []
+    for (vendor, host), g in groups.items():
+        urls = sorted(g["urls"], key=str.lower)
+        names = sorted(g["names"], key=str.lower)
+        s = new_server(urls[0], vendor, "lantern")
+        # Retry against a different tenant on the same host when one exists.
+        s["candidates"] = urls[:2]
+        s["endpoint_count"] = len(urls)
+        s["endpoint_names"] = set(names[:MAX_NAMES_PER_SERVER])
+        s["brands"] = set(names)
+        servers.append(s)
+        for name in names:
+            org_id = "lantern:" + hashlib.sha1(f"{vendor}|{host}|{name}".encode()).hexdigest()[:24]
+            brands.append({"org_id": org_id, "name": name, "kind": "primary", "parent_org_id": None,
+                           "addresses": [urls[0]], "city": None, "state": None, "vendor": vendor})
+    return servers, brands, endpoint_count
+
+
+# --- Probing ---------------------------------------------------------------------------------
+
+def fetch_metadata(base):
+    cs = json.loads(http_get(base + "/metadata", headers={"Accept": "application/fhir+json"}))
+    if not isinstance(cs, dict) or cs.get("resourceType") != "CapabilityStatement":
+        raise ValueError(f"not a CapabilityStatement ({type(cs).__name__})")
     sw = cs.get("software") or {}
-    return {"software_name": sw.get("name"), "software_version": sw.get("version"),
+    return {"software_name": (sw.get("name") or "").strip() or None,
+            "software_version": (sw.get("version") or "").strip() or None,
             "build_date": parse_date(sw.get("releaseDate")), "fhir_version": cs.get("fhirVersion")}
 
 
 def probe(server, retry_delay):
-    err = None
+    err, url = None, server["candidates"][0]
     for attempt in (1, 2):
+        url = server["candidates"][min(attempt - 1, len(server["candidates"]) - 1)]
         try:
-            return {**fetch_metadata(server["address"]), "attempts": attempt, "error": None}
+            return {**fetch_metadata(url), "attempts": attempt, "error": None, "probe_url": url}
         except Exception as ex:  # any failure counts; one retry, then record the error
             err = f"{type(ex).__name__}: {ex}"[:300]
             if attempt == 1:
                 time.sleep(retry_delay)
     return {"software_name": None, "software_version": None, "build_date": None,
-            "fhir_version": None, "attempts": 2, "error": err}
+            "fhir_version": None, "attempts": 2, "error": err, "probe_url": url}
 
 
 def scan(servers, workers, retry_delay):
+    done = 0
+
+    def run(s):
+        nonlocal done
+        r = probe(s, retry_delay)
+        done += 1
+        if done % 500 == 0:
+            print(f"  {done}/{len(servers)} probed", flush=True)
+        return r
+
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        results = list(pool.map(lambda s: probe(s, retry_delay), servers))
+        results = list(pool.map(run, servers))
     rows = []
     for s, r in zip(servers, results):
-        month = parse_release_month(r["software_version"])
-        rows.append({"address": s["address"], "host": s["host"],
+        month = parse_release_month(r["software_version"]) if s["vendor"] == EPIC_VENDOR else None
+        rows.append({"address": s["address"], "host": s["host"], "vendor": s["vendor"],
+                     "source": s["source"], "endpoint_count": s["endpoint_count"],
                      "endpoint_names": sorted(s["endpoint_names"]),
                      "managing_orgs": sorted(s["managing_orgs"]),
                      "brand_count": len(s["brands"]), "location_count": s["locations"],
@@ -186,13 +266,18 @@ def chunks(items, size):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--bundle", help="use a local Brands bundle file instead of downloading")
+    ap.add_argument("--sources", default="epic,lantern", help="comma list: epic, lantern")
+    ap.add_argument("--bundle", help="use a local Epic Brands bundle file instead of downloading")
+    ap.add_argument("--lantern-csv", help="use a local Lantern CSV instead of downloading")
     ap.add_argument("--out", default="data/latest_scan.json", help="local JSON output path")
-    ap.add_argument("--workers", type=int, default=24)
+    ap.add_argument("--workers", type=int, default=48)
     ap.add_argument("--retry-delay", type=float, default=5.0)
     ap.add_argument("--no-upload", action="store_true")
     ap.add_argument("--trigger", default=os.environ.get("SCAN_TRIGGER", "manual"))
     args = ap.parse_args()
+    sources = {s.strip() for s in args.sources.split(",") if s.strip()}
+    if not sources <= {"epic", "lantern"}:
+        sys.exit(f"Unknown source(s): {', '.join(sources - {'epic', 'lantern'})}")
 
     env = {k: os.environ.get(k) for k in ("SUPABASE_URL", "SUPABASE_ANON_KEY", "INGEST_TOKEN")}
     upload = not args.no_upload
@@ -200,17 +285,36 @@ def main():
         missing = ", ".join(k for k, v in env.items() if not v)
         sys.exit(f"Missing {missing}. Set them or pass --no-upload.")
 
-    print("Downloading Brands bundle...", flush=True)
-    bundle = load_bundle(args.bundle)
-    servers, brands, endpoint_count = index_bundle(bundle)
-    print(f"{endpoint_count} endpoints -> {len(servers)} unique servers, {len(brands)} brands", flush=True)
+    servers, brands, endpoint_count, bundle_updated = [], [], 0, None
+    if "epic" in sources:
+        print("Downloading Epic Brands bundle...", flush=True)
+        if args.bundle:
+            with open(args.bundle) as f:
+                bundle = json.load(f)
+        else:
+            bundle = json.loads(http_get(BRANDS_URL, timeout=180))
+        bundle_updated = (bundle.get("meta") or {}).get("lastUpdated")
+        s, b, n = index_epic(bundle)
+        print(f"  Epic: {n} endpoints -> {len(s)} servers, {len(b)} brands", flush=True)
+        servers += s; brands += b; endpoint_count += n
+    if "lantern" in sources:
+        print("Downloading ONC Lantern CHPL endpoint export...", flush=True)
+        if args.lantern_csv:
+            with open(args.lantern_csv, "rb") as f:
+                raw = f.read()
+        else:
+            raw = http_get(LANTERN_URL, timeout=600)
+        # Epic comes from its own bundle when that source is on (Lantern's Epic list is a subset).
+        s, b, n = index_lantern(raw, {EPIC_VENDOR} if "epic" in sources else set())
+        print(f"  Lantern: {n} endpoints -> {len(s)} servers across "
+              f"{len({x['vendor'] for x in s})} developers, {len(b)} org names", flush=True)
+        servers += s; brands += b; endpoint_count += n
 
     db = run_id = None
     if upload:
         db = Supabase(env["SUPABASE_URL"], env["SUPABASE_ANON_KEY"], env["INGEST_TOKEN"])
         run_id = db.rpc("ingest_start_scan", p_trigger=args.trigger,
-                        p_bundle_last_updated=(bundle.get("meta") or {}).get("lastUpdated"),
-                        p_endpoint_count=endpoint_count)
+                        p_bundle_last_updated=bundle_updated, p_endpoint_count=endpoint_count)
         print(f"Started scan run {run_id}", flush=True)
 
     try:
@@ -241,11 +345,20 @@ def main():
                 print(f"Could not mark run {run_id} failed: {ex}", file=sys.stderr)
         raise
 
-    counts = collections.Counter(r["software_version"] or "(no response)" for r in rows)
-    order = sorted(counts, key=lambda v: parse_release_month(v) or dt.date.min, reverse=True)
-    print("\nServers by release:")
-    for v in order:
-        print(f"  {v:<16} {counts[v]:>4}")
+    by_vendor = collections.defaultdict(list)
+    for r in rows:
+        by_vendor[r["vendor"]].append(r)
+    print("\nServers by EHR (top 15):")
+    for vendor, rs in sorted(by_vendor.items(), key=lambda kv: -len(kv[1]))[:15]:
+        ok = sum(1 for r in rs if not r["error"])
+        print(f"  {vendor[:44]:<44} {len(rs):>5} servers  {ok:>5} responding")
+    epic = by_vendor.get(EPIC_VENDOR, [])
+    if epic:
+        counts = collections.Counter(r["software_version"] or "(no response)" for r in epic)
+        order = sorted(counts, key=lambda v: parse_release_month(v) or dt.date.min, reverse=True)
+        print("\nEpic servers by release:")
+        for v in order:
+            print(f"  {v:<16} {counts[v]:>4}")
 
 
 if __name__ == "__main__":

@@ -52,7 +52,7 @@ export default async function Home() {
       supabase
         .from("server_results")
         .select(
-          "address,host,endpoint_names,managing_orgs,brand_count,location_count,states,software_name,software_version,release_month,build_date,fhir_version,attempts,error"
+          "address,vendor,source,endpoint_count,probe_url,host,endpoint_names,managing_orgs,brand_count,location_count,states,software_name,software_version,release_month,build_date,fhir_version,attempts,error"
         )
         .eq("run_id", latest.id)
         .order("address")
@@ -62,7 +62,7 @@ export default async function Home() {
       ? fetchAll<PriorResult>((from, to) =>
           supabase
             .from("server_results")
-            .select("address,software_version,release_month")
+            .select("address,vendor,software_version,release_month")
             .eq("run_id", previous.id)
             .order("address")
             .range(from, to)

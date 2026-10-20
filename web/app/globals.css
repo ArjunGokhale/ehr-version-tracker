@@ -175,6 +175,27 @@ button:focus-visible {
 .topbar-actions {
   display: flex;
   gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.ehr-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.875rem;
+  color: var(--ink-2);
+}
+.ehr-picker select {
+  max-width: 260px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.caveat {
+  margin-top: 0.75rem;
+  max-width: 80ch;
+}
+.show-more {
+  margin-top: 0.75rem;
 }
 .section-head {
   display: flex;
@@ -225,7 +246,10 @@ button:focus-visible {
   line-height: 1.05;
 }
 .hero {
-  border-left: 4px solid var(--stale);
+  border-left: 4px solid var(--accent);
+}
+.hero.stale-accent {
+  border-left-color: var(--stale);
 }
 
 /* Segmented control */
@@ -289,7 +313,7 @@ button:focus-visible {
 .bar-row {
   position: relative;
   display: grid;
-  grid-template-columns: 9.5rem 1fr;
+  grid-template-columns: 12rem 1fr;
   align-items: center;
   gap: 0.75rem;
   width: 100%;
@@ -313,6 +337,8 @@ button:focus-visible {
   font-size: 0.875rem;
   color: var(--ink-2);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .bar-track {
   display: flex;
@@ -334,7 +360,7 @@ button:focus-visible {
 .tooltip {
   position: absolute;
   z-index: 5;
-  left: 10.5rem;
+  left: 13rem;
   top: calc(100% - 2px);
   display: flex;
   flex-direction: column;
@@ -517,6 +543,11 @@ dd {
 @media (max-width: 560px) {
   .bar-row {
     grid-template-columns: 7.5rem 1fr;
+  }
+  .ehr-picker,
+  .ehr-picker select {
+    width: 100%;
+    max-width: none;
   }
   .tooltip {
     left: 0.5rem;
