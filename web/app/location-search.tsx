@@ -19,15 +19,16 @@ type Brand = {
 export default function LocationSearch({
   results,
   asOf,
-  ehr,
+  vendors,
 }: {
   results: ServerResult[];
   asOf: Date;
-  ehr: string; // "" = all EHRs
+  vendors: string[]; // [] = all EHRs
 }) {
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<Brand[]>([]);
   const [loading, setLoading] = useState(false);
+  const vendorKey = vendors.join("\u0000"); // stable dependency for the vendor list
   const byAddress = useMemo(
     () => new Map(results.map((r) => [r.address.toLowerCase(), r])),
     [results]
@@ -45,7 +46,7 @@ export default function LocationSearch({
       // search_brands checks the reader allowlist and runs the indexed ILIKE (see migrations).
       const { data } = await createClient().rpc("search_brands", {
         p_query: q,
-        p_vendor: ehr || null,
+        p_vendors: vendors.length ? vendors : null,
         p_limit: 25,
       });
       if (!cancelled) {
@@ -57,7 +58,7 @@ export default function LocationSearch({
       cancelled = true;
       clearTimeout(t);
     };
-  }, [query, ehr]);
+  }, [query, vendorKey]);
 
   return (
     <section className="card">
@@ -66,7 +67,12 @@ export default function LocationSearch({
           <h2>Find a hospital or clinic</h2>
           <p className="muted">
             Searches every organization name the EHR developers publish
-            {ehr ? ` for ${vendorLabel(ehr)}` : ""}, including Epic&rsquo;s ~97,000 locations.
+            {vendors.length === 1
+              ? ` for ${vendorLabel(vendors[0])}`
+              : vendors.length
+                ? ` for the ${vendors.length} selected EHRs`
+                : ""}
+            , including Epic&rsquo;s ~97,000 locations.
           </p>
         </div>
         <div className="filters">

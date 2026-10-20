@@ -178,18 +178,6 @@ button:focus-visible {
   align-items: center;
   flex-wrap: wrap;
 }
-.ehr-picker {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.875rem;
-  color: var(--ink-2);
-}
-.ehr-picker select {
-  max-width: 260px;
-  font-weight: 600;
-  color: var(--ink);
-}
 .caveat {
   margin-top: 0.75rem;
   max-width: 80ch;
@@ -544,11 +532,6 @@ dd {
   .bar-row {
     grid-template-columns: 7.5rem 1fr;
   }
-  .ehr-picker,
-  .ehr-picker select {
-    width: 100%;
-    max-width: none;
-  }
   .tooltip {
     left: 0.5rem;
   }
@@ -561,5 +544,113 @@ dd {
   }
   .hit-server {
     justify-content: flex-start;
+  }
+}
+
+/* EHR picker: searchable multi-select */
+.vendor-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.picker-label {
+  font-size: 0.875rem;
+  color: var(--ink-2);
+}
+.picker-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  min-width: 200px;
+  max-width: 300px;
+  font-weight: 600;
+}
+.picker-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.picker-pop {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16);
+  padding: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.picker-pop input {
+  width: 100%;
+}
+.picker-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 0.2rem;
+}
+.picker-actions .link {
+  margin: 0;
+}
+.picker-pop ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.picker-pop li[role="option"] {
+  display: grid;
+  grid-template-columns: 1.1rem 1fr auto;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.45rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+.picker-pop li.active {
+  background: var(--accent-wash);
+}
+.picker-pop li.on .opt-label {
+  font-weight: 600;
+}
+.picker-pop .check {
+  color: var(--accent);
+  font-weight: 700;
+}
+.picker-pop .opt-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.picker-pop .opt-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8125rem;
+}
+.picker-pop .empty {
+  padding: 0.5rem;
+}
+@media (max-width: 560px) {
+  .vendor-picker {
+    width: 100%;
+  }
+  .picker-button {
+    flex: 1;
+    max-width: none;
+  }
+  .picker-pop {
+    left: 0;
+    right: auto;
+    width: 100%;
   }
 }

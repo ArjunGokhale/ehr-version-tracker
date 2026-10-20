@@ -17,6 +17,7 @@ import { signOut } from "./actions";
 import BarChart, { type Bucket, type Measure } from "./bar-chart";
 import ServerTable, { type VersionOption } from "./server-table";
 import LocationSearch from "./location-search";
+import VendorPicker from "./vendor-picker";
 
 type Props = {
   latest: ScanRun;
@@ -47,22 +48,25 @@ const add = (a: Agg, r: ServerResult) => {
 
 export default function Dashboard({ latest, previous, history, results, prior, userEmail }: Props) {
   const asOf = useMemo(() => new Date(latest.started_at), [latest.started_at]);
-  const [ehr, setEhrState] = useState<string>(""); // "" = all EHRs
+  const [selected, setSelectedState] = useState<string[]>([]); // [] = all EHRs
   const [measure, setMeasure] = useState<Measure>("servers");
   const [versionFilter, setVersionFilter] = useState<string>("");
+  // Exactly one EHR chosen: the per-version views. Otherwise the by-EHR views.
+  const ehr = selected.length === 1 ? selected[0] : "";
+  const selectedSet = useMemo(() => new Set(selected), [selected]);
 
-  // Keep the EHR choice in the URL so a filtered view can be bookmarked or shared.
+  // Keep the EHR choice in the URL (?ehr=A&ehr=B) so a filtered view can be bookmarked or shared.
   useEffect(() => {
-    const v = new URLSearchParams(window.location.search).get("ehr");
-    if (v) setEhrState(v);
+    const v = new URLSearchParams(window.location.search).getAll("ehr");
+    if (v.length) setSelectedState(v);
   }, []);
-  const setEhr = (v: string) => {
-    setEhrState(v);
+  const setSelected = (v: string[]) => {
+    setSelectedState(v);
     setVersionFilter("");
-    if (v !== EPIC) setMeasure((m) => (m === "customers" ? "servers" : m));
+    if (!(v.length === 1 && v[0] === EPIC)) setMeasure((m) => (m === "customers" ? "servers" : m));
     const url = new URL(window.location.href);
-    if (v) url.searchParams.set("ehr", v);
-    else url.searchParams.delete("ehr");
+    url.searchParams.delete("ehr");
+    for (const x of v) url.searchParams.append("ehr", x);
     window.history.replaceState(null, "", url);
   };
 
@@ -79,8 +83,9 @@ export default function Dashboard({ latest, previous, history, results, prior, u
   }, [results]);
 
   const scoped = useMemo(
-    () => (ehr ? results.filter((r) => (r.vendor ?? "Unknown") === ehr) : results),
-    [results, ehr]
+    () =>
+      selected.length ? results.filter((r) => selectedSet.has(r.vendor ?? "Unknown")) : results,
+    [results, selected, selectedSet]
   );
   const isEpic = ehr === EPIC;
 
@@ -118,9 +123,9 @@ export default function Dashboard({ latest, previous, history, results, prior, u
       kind,
     });
     if (!ehr) {
-      // All EHRs: one bar per developer, top N by the chosen measure + Other.
+      // All or several EHRs: one bar per developer, top N by the chosen measure + Other.
       const m = new Map<string, Agg>();
-      for (const r of results) {
+      for (const r of scoped) {
         const k = r.vendor ?? "Unknown";
         if (!m.has(k)) m.set(k, emptyAgg());
         add(m.get(k)!, r);
@@ -193,7 +198,7 @@ export default function Dashboard({ latest, previous, history, results, prior, u
     : 0;
 
   const showStale = () => {
-    if (ehr !== EPIC) setEhr(EPIC);
+    if (ehr !== EPIC) setSelected([EPIC]);
     setTimeout(() => {
       setVersionFilter(STALE);
       document.getElementById("servers")?.scrollIntoView({ behavior: "smooth" });
@@ -218,13 +223,13 @@ export default function Dashboard({ latest, previous, history, results, prior, u
     }
     const now = new Set(results.map((r) => r.address.toLowerCase()));
     const removed = prior.filter(
-      (p) => !now.has(p.address.toLowerCase()) && (!ehr || (p.vendor ?? EPIC) === ehr)
+      (p) => !now.has(p.address.toLowerCase()) && (!selected.length || selectedSet.has(p.vendor ?? EPIC))
     ).length;
     const firstScan = [...new Set(scoped.map((r) => r.vendor ?? EPIC))].filter(
       (v) => !priorVendors.has(v)
     );
     return { upgraded, added, removed, wentQuiet, firstScan };
-  }, [previous, prior, scoped, results, ehr]);
+  }, [previous, prior, scoped, results, selected, selectedSet]);
 
   const downloadCsv = () => {
     const cols = [
@@ -265,14 +270,18 @@ export default function Dashboard({ latest, previous, history, results, prior, u
     const blob = new Blob([[cols.join(","), ...lines].join("\n")], { type: "text/csv" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    const scope = ehr ? vendorLabel(ehr).toLowerCase().replace(/[^a-z0-9]+/g, "-") : "all-ehrs";
+    const scope = selected.length
+      ? selected.length <= 3
+        ? selected.map((v) => vendorLabel(v).toLowerCase().replace(/[^a-z0-9]+/g, "-")).join("_")
+        : `${selected.length}-ehrs`
+      : "all-ehrs";
     a.download = `fhir-versions-${scope}-${latest.started_at.slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
   };
 
   const measures: Measure[] = isEpic ? ["servers", "customers", "endpoints"] : ["servers", "endpoints"];
-  const scopeName = ehr ? vendorLabel(ehr) : "all EHRs";
+  const scopeName = ehr ? vendorLabel(ehr) : selected.length ? `${selected.length} EHRs` : "all EHRs";
 
   return (
     <main className="page">
@@ -286,17 +295,7 @@ export default function Dashboard({ latest, previous, history, results, prior, u
           </p>
         </div>
         <div className="topbar-actions">
-          <label className="ehr-picker">
-            <span>EHR</span>
-            <select value={ehr} onChange={(e) => setEhr(e.target.value)} aria-label="Filter by EHR">
-              <option value="">All EHRs ({vendors.length})</option>
-              {vendors.map((v) => (
-                <option key={v.vendor} value={v.vendor}>
-                  {vendorLabel(v.vendor)} ({v.servers.toLocaleString()})
-                </option>
-              ))}
-            </select>
-          </label>
+          <VendorPicker options={vendors} selected={selected} onChange={setSelected} />
           <button onClick={downloadCsv}>Download CSV</button>
           <form action={signOut}>
             <button type="submit" title={userEmail ?? undefined}>
@@ -323,11 +322,13 @@ export default function Dashboard({ latest, previous, history, results, prior, u
           </div>
         ) : (
           <div className="card hero">
-            <span className="stat-label">Servers scanned{ehr ? "" : ", all EHRs"}</span>
+            <span className="stat-label">
+              Servers scanned{ehr ? "" : selected.length ? `, ${selected.length} EHRs` : ", all EHRs"}
+            </span>
             <span className="hero-value">{scoped.length.toLocaleString()}</span>
             <span className="muted">
               {endpoints.toLocaleString()} endpoints
-              {ehr ? "" : ` · ${vendors.length} EHR developers`}
+              {ehr ? "" : selected.length ? "" : ` · ${vendors.length} EHR developers`}
             </span>
           </div>
         )}
@@ -372,7 +373,7 @@ export default function Dashboard({ latest, previous, history, results, prior, u
           ) : (
             <>
               <span className="stat-value small">Varies by EHR</span>
-              <span className="muted">Pick an EHR to compare versions</span>
+              <span className="muted">Pick a single EHR to compare versions</span>
             </>
           )}
         </div>
@@ -403,7 +404,7 @@ export default function Dashboard({ latest, previous, history, results, prior, u
             </h2>
             <p className="muted">
               {!ehr
-                ? `Top ${TOP_VENDORS} EHR developers. Click a bar to focus on that EHR.`
+                ? `${selected.length ? "Selected" : `Top ${TOP_VENDORS}`} EHR developers. Click a bar to focus on that EHR.`
                 : isEpic
                   ? "Each unique FHIR server address counted once. Click a bar to filter the list."
                   : `What ${scopeName} servers report as software.version. Click a bar to filter the list.`}
@@ -428,7 +429,7 @@ export default function Dashboard({ latest, previous, history, results, prior, u
           selected={ehr ? versionFilter : ""}
           onSelect={(key) => {
             if (!ehr) {
-              if (key !== OTHER) setEhr(key);
+              if (key !== OTHER) setSelected([key]);
               return;
             }
             setVersionFilter((cur) => (cur === key ? "" : key));
@@ -478,7 +479,7 @@ export default function Dashboard({ latest, previous, history, results, prior, u
         </section>
       )}
 
-      <LocationSearch results={results} asOf={asOf} ehr={ehr} />
+      <LocationSearch results={results} asOf={asOf} vendors={selected} />
 
       <ServerTable
         results={scoped}
