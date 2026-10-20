@@ -76,9 +76,11 @@ export default function Dashboard({ latest, previous, history, results, prior, u
     const before = new Map(prior.map((p) => [p.address.toLowerCase(), p]));
     const upgraded: { r: ServerResult; from: string | null }[] = [];
     const added: ServerResult[] = [];
+    let wentQuiet = 0;
     for (const r of results) {
       const p = before.get(r.address.toLowerCase());
       if (!p) added.push(r);
+      else if (p.software_version && !r.software_version) wentQuiet += 1;
       else if (
         r.software_version &&
         p.software_version &&
@@ -88,7 +90,7 @@ export default function Dashboard({ latest, previous, history, results, prior, u
     }
     const now = new Set(results.map((r) => r.address.toLowerCase()));
     const removed = prior.filter((p) => !now.has(p.address.toLowerCase())).length;
-    return { upgraded, added, removed };
+    return { upgraded, added, removed, wentQuiet };
   }, [previous, prior, results]);
 
   const downloadCsv = () => {
@@ -234,7 +236,7 @@ export default function Dashboard({ latest, previous, history, results, prior, u
           <h2>Since the previous scan ({shortDate(previous!.started_at)})</h2>
           <p className="muted">
             {changes.upgraded.length} servers changed release · {changes.added.length} new ·{" "}
-            {changes.removed} no longer listed
+            {changes.removed} no longer listed · {changes.wentQuiet} stopped responding
           </p>
           {changes.upgraded.length > 0 && (
             <ul className="changes">
