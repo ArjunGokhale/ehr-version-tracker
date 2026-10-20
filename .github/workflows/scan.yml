@@ -1,4 +1,4 @@
-name: Scan Epic FHIR servers
+name: Scan EHR FHIR servers
 
 on:
   workflow_dispatch: # ad hoc only: Actions -> Run workflow, or `gh workflow run scan.yml`
