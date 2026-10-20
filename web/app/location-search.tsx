@@ -42,16 +42,12 @@ export default function LocationSearch({
     let cancelled = false;
     const t = setTimeout(async () => {
       setLoading(true);
-      const pattern = `%${q.replace(/[%_\\]/g, (c) => "\\" + c)}%`;
-      let req = createClient()
-        .from("brands")
-        .select("org_id,name,kind,city,state,vendor,addresses")
-        .ilike("name", pattern);
-      if (ehr) req = req.eq("vendor", ehr);
-      const { data } = await req
-        .order("kind", { ascending: false }) // "primary" brands before their locations
-        .order("name")
-        .limit(25);
+      // search_brands checks the reader allowlist and runs the indexed ILIKE (see migrations).
+      const { data } = await createClient().rpc("search_brands", {
+        p_query: q,
+        p_vendor: ehr || null,
+        p_limit: 25,
+      });
       if (!cancelled) {
         setHits((data ?? []) as Brand[]);
         setLoading(false);

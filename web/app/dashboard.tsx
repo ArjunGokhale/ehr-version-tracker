@@ -280,8 +280,9 @@ export default function Dashboard({ latest, previous, history, results, prior, u
         <div>
           <h1>EHR version tracker</h1>
           <p className="muted">
-            Last scan {shortDate(latest.started_at)} · {latest.server_count?.toLocaleString()} servers
-            from {latest.endpoint_count?.toLocaleString()} published endpoints
+            Last scan {shortDate(latest.started_at)} · {results.length.toLocaleString()} servers ·{" "}
+            {results.reduce((s, r) => s + r.endpoint_count, 0).toLocaleString()} endpoints ·{" "}
+            {vendors.length} EHR developers
           </p>
         </div>
         <div className="topbar-actions">

@@ -74,7 +74,11 @@ export default function ServerTable({
     return filtered.sort((a, b) => {
       const va = val(a);
       const vb = val(b);
-      const c = va < vb ? -1 : va > vb ? 1 : 0;
+      // Number-aware so version 3.13 sorts after 3.4.
+      const c =
+        typeof va === "number" && typeof vb === "number"
+          ? va - vb
+          : String(va).localeCompare(String(vb), undefined, { numeric: true });
       return c * sort.dir || serverName(a).localeCompare(serverName(b));
     });
   }, [results, query, matchesVersion, sort]);
