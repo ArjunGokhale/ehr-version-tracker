@@ -32,7 +32,7 @@ age ("over a year old") is computed for Epic only.
 | `supabase/migrations/` | Schema, row-level security, and the token-gated ingest functions. |
 | `web/` | Next.js dashboard (charts, server list, hospital/clinic search, CSV export). |
 
-Supabase project: `epic-version-tracker` (`omrxqhtjluzujbdpfrrd`, us-east-1, free tier). Free projects pause
+Supabase project: `epic-version-tracker` (its original name; `omrxqhtjluzujbdpfrrd`, us-east-1, free tier). Free projects pause
 after about a week without activity; if the dashboard errors, restore the project from the Supabase dashboard
 (takes a few minutes) before running a scan.
 

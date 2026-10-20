@@ -40,7 +40,7 @@ from concurrent.futures import ThreadPoolExecutor
 BRANDS_URL = "https://open.epic.com/Endpoints/Brands"
 LANTERN_URL = "https://lantern.healthit.gov/api/daily/download?source=CHPL"
 EPIC_VENDOR = "Epic Systems Corporation"
-USER_AGENT = "epic-version-tracker/1.0 (+https://github.com/ArjunGokhale/epic-version-tracker)"
+USER_AGENT = "ehr-version-tracker/1.0 (+https://github.com/ArjunGokhale/ehr-version-tracker)"
 MAX_NAMES_PER_SERVER = 5  # org names stored on a server row; the full list goes to `brands`
 MONTHS = {m: i for i, m in enumerate(
     ["january", "february", "march", "april", "may", "june", "july", "august",
