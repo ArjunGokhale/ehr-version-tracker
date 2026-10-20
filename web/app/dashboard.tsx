@@ -266,7 +266,7 @@ export default function Dashboard({ latest, previous, history, results, prior, u
       <section className="card footnote">
         <h2>How this works</h2>
         <p className="muted">
-          A weekly GitHub Action downloads Epic&rsquo;s public{" "}
+          An on-demand GitHub Action downloads Epic&rsquo;s public{" "}
           <a href="https://open.epic.com/Endpoints/Brands">Brands bundle</a>, requests{" "}
           <code>[address]/metadata</code> from every unique FHIR server with{" "}
           <code>Accept: application/fhir+json</code>, retries failures once, and records{" "}

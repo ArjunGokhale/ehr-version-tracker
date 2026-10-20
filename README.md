@@ -1,6 +1,6 @@
 # Epic Version Tracker
 
-Which Epic release every public FHIR server reports, rescanned weekly, with a login-gated dashboard.
+Which Epic release every public FHIR server reports, rescanned on demand, with a login-gated dashboard.
 
 Method after Brendan Keeler, ["Your Version Is Showing"](https://healthapiguy.substack.com/p/your-version-is-showing):
 download Epic's public [Brands bundle](https://open.epic.com/Endpoints/Brands), request `[address]/metadata`
@@ -13,11 +13,13 @@ many brands share one.
 | Path | What it is |
 |---|---|
 | `scanner/scan.py` | Standard-library Python scanner. Writes each scan to Supabase and a local `data/latest_scan.json`. |
-| `.github/workflows/scan.yml` | Runs the scanner Mondays 13:00 UTC and on demand. |
+| `.github/workflows/scan.yml` | Runs the scanner on demand (no schedule). |
 | `supabase/migrations/` | Schema, row-level security, and the token-gated ingest functions. |
 | `web/` | Next.js dashboard (charts, server list, hospital/clinic search, CSV export). |
 
-Supabase project: `epic-version-tracker` (`omrxqhtjluzujbdpfrrd`, us-east-1, free tier).
+Supabase project: `epic-version-tracker` (`omrxqhtjluzujbdpfrrd`, us-east-1, free tier). Free projects pause
+after about a week without activity; if the dashboard errors, restore the project from the Supabase dashboard
+(takes a few minutes) before running a scan.
 
 ## Requery
 
