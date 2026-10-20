@@ -1,0 +1,12 @@
+.env
+.env.local
+web/.env.local
+web/node_modules/
+web/.next/
+web/tsconfig.tsbuildinfo
+web/next-env.d.ts
+.vercel
+__pycache__/
+*.pyc
+data/
+DEMO_CREDENTIALS.txt
