@@ -6,7 +6,7 @@ Sources
            Showing" and is more complete for Epic than any aggregator.
   lantern  ONC Lantern's daily CHPL endpoint export (every other certified EHR developer's
            published endpoint list). Many vendors host thousands of tenants on one host, so
-           endpoints are grouped by (developer, host) and one tenant is probed per host; the
+           endpoints are grouped by host and one tenant is probed per host; the
            retry uses a different tenant on the same host when there is one.
 
 For each server: GET [base]/metadata with Accept: application/fhir+json, retry failures
@@ -150,9 +150,15 @@ def index_epic(bundle):
 # --- Everyone else: ONC Lantern's CHPL export ------------------------------------------------
 
 def index_lantern(raw_csv, skip_vendors):
-    """Group Lantern's endpoint rows by (developer, host); one server per group."""
+    """Group Lantern's endpoint rows by host; one server per host.
+
+    A host can appear under more than one CHPL developer (a parent company and a subsidiary
+    both certifying the same product); it is attributed to the developer listing the most
+    endpoints on it, ties going to the more specific (longer) name.
+    """
     reader = csv.DictReader(io.StringIO(raw_csv.decode("utf-8", errors="replace")))
-    groups = collections.defaultdict(lambda: {"urls": set(), "names": set()})
+    groups = collections.defaultdict(
+        lambda: {"urls": set(), "names": set(), "vendors": collections.Counter()})
     endpoint_count = 0
     for row in reader:
         vendor = (row.get("api_developer_name") or "").strip()
@@ -163,14 +169,16 @@ def index_lantern(raw_csv, skip_vendors):
         if not host:
             continue
         endpoint_count += 1
-        g = groups[(vendor, host.lower())]
+        g = groups[host.lower()]
         g["urls"].add(url)
+        g["vendors"][vendor] += 1
         for name in (row.get("api_information_source_name") or "").split(";"):
             if name.strip():
                 g["names"].add(name.strip())
 
     servers, brands = [], []
-    for (vendor, host), g in groups.items():
+    for host, g in groups.items():
+        vendor = max(g["vendors"].items(), key=lambda kv: (kv[1], len(kv[0])))[0]
         urls = sorted(g["urls"], key=str.lower)
         names = sorted(g["names"], key=str.lower)
         s = new_server(urls[0], vendor, "lantern")
@@ -181,16 +189,26 @@ def index_lantern(raw_csv, skip_vendors):
         s["brands"] = set(names)
         servers.append(s)
         for name in names:
-            org_id = "lantern:" + hashlib.sha1(f"{vendor}|{host}|{name}".encode()).hexdigest()[:24]
+            org_id = "lantern:" + hashlib.sha1(f"{host}|{name}".encode()).hexdigest()[:24]
             brands.append({"org_id": org_id, "name": name, "kind": "primary", "parent_org_id": None,
                            "addresses": [urls[0]], "city": None, "state": None, "vendor": vendor})
     return servers, brands, endpoint_count
 
 
+def dedupe(servers):
+    """One row per address (case-insensitive); the first source listed wins."""
+    seen, out = set(), []
+    for s in servers:
+        if s["address"].lower() not in seen:
+            seen.add(s["address"].lower())
+            out.append(s)
+    return out
+
+
 # --- Probing ---------------------------------------------------------------------------------
 
 def fetch_metadata(base):
-    cs = json.loads(http_get(base + "/metadata", headers={"Accept": "application/fhir+json"}))
+    cs = json.loads(http_get(base + "/metadata", headers={"Accept": "application/fhir+json"}, timeout=20))
     if not isinstance(cs, dict) or cs.get("resourceType") != "CapabilityStatement":
         raise ValueError(f"not a CapabilityStatement ({type(cs).__name__})")
     sw = cs.get("software") or {}
@@ -270,7 +288,7 @@ def main():
     ap.add_argument("--bundle", help="use a local Epic Brands bundle file instead of downloading")
     ap.add_argument("--lantern-csv", help="use a local Lantern CSV instead of downloading")
     ap.add_argument("--out", default="data/latest_scan.json", help="local JSON output path")
-    ap.add_argument("--workers", type=int, default=48)
+    ap.add_argument("--workers", type=int, default=64)
     ap.add_argument("--retry-delay", type=float, default=5.0)
     ap.add_argument("--no-upload", action="store_true")
     ap.add_argument("--trigger", default=os.environ.get("SCAN_TRIGGER", "manual"))
@@ -309,6 +327,8 @@ def main():
         print(f"  Lantern: {n} endpoints -> {len(s)} servers across "
               f"{len({x['vendor'] for x in s})} developers, {len(b)} org names", flush=True)
         servers += s; brands += b; endpoint_count += n
+
+    servers = dedupe(servers)
 
     db = run_id = None
     if upload:
